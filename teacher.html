@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>教師端：測驗結果</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th, td { border-bottom: 1px solid var(--border); padding: 8px 6px; text-align: left; vertical-align: top; }
+    th { background: var(--primary-light); color: var(--primary); position: sticky; top: 0; }
+    .wrong-list { margin: 0; padding-left: 16px; font-size: 12.5px; color: var(--muted); white-space: pre-line; }
+    .table-wrap { overflow-x: auto; }
+    .filter-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .filter-row input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 13.5px; }
+    .stat-cards { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+    .stat-card { flex: 1; min-width: 110px; background: var(--primary-light); border-radius: 10px; padding: 10px 14px; text-align: center; }
+    .stat-card .num { font-size: 22px; font-weight: 800; color: var(--primary); }
+    .stat-card .lbl { font-size: 12px; color: var(--muted); }
+    .fallback-box { text-align: center; padding: 20px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>教師端：測驗結果</h1>
+  <div class="sub">輸入密碼查看所有學生的測驗結果</div>
+
+  <div id="screen-login" class="card">
+    <label>教師密碼</label>
+    <input type="text" id="in-pass" placeholder="請輸入密碼">
+    <button class="primary" id="btn-login">查看結果</button>
+    <div id="login-msg" class="sub" style="margin-top:10px;"></div>
+    <div class="footer-note" style="margin-top:10px;">
+      （密碼僅為簡易防呆，非嚴格保護；資料保護仍以 Google 試算表的共用權限為準）
+    </div>
+  </div>
+
+  <div id="screen-dash" style="display:none">
+    <div class="stat-cards" id="stat-cards"></div>
+    <div class="card">
+      <div class="filter-row">
+        <input type="text" id="f-name" placeholder="搜尋姓名／班級座號">
+        <button class="secondary" id="btn-refresh">重新整理</button>
+        <a id="link-sheet" href="#" target="_blank"><button class="ghost" type="button">直接開啟 Google 試算表</button></a>
+      </div>
+      <div id="dash-error" class="banner" style="display:none;background:#fdecea;color:#c0392b;"></div>
+      <div class="table-wrap">
+        <table id="result-table">
+          <thead>
+            <tr><th>時間</th><th>姓名</th><th>班級座號</th><th>類別</th><th>題數</th><th>答對</th><th>答錯</th><th>錯題</th></tr>
+          </thead>
+          <tbody id="result-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+var allRows = [];
+
+document.getElementById('link-sheet').href = CONFIG.SHEET_VIEW_URL || '#';
+document.getElementById('btn-login').onclick = login;
+document.getElementById('in-pass').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') login();
+});
+document.getElementById('btn-refresh').onclick = loadData;
+document.getElementById('f-name').addEventListener('input', renderDash);
+
+function login() {
+  var pass = document.getElementById('in-pass').value.trim();
+  var configured = (CONFIG.TEACHER_PASSCODE || '').trim();
+  if (!configured || configured.indexOf('請改成') === 0) {
+    document.getElementById('login-msg').textContent = '尚未在 config.js 設定教師密碼。';
+    return;
+  }
+  if (pass !== configured) {
+    document.getElementById('login-msg').textContent = '密碼錯誤，請再試一次。';
+    return;
+  }
+  document.getElementById('screen-login').style.display = 'none';
+  document.getElementById('screen-dash').style.display = 'block';
+  loadData();
+}
+
+function extractSheetId(url) {
+  var m = /\/d\/([a-zA-Z0-9-_]+)/.exec(url || '');
+  return m ? m[1] : '';
+}
+function extractGid(url) {
+  var m = /gid=(\d+)/.exec(url || '');
+  return m ? m[1] : '0';
+}
+
+var gvizLoaded = false;
+
+function loadData() {
+  var errBox = document.getElementById('dash-error');
+  errBox.style.display = 'none';
+  gvizLoaded = false;
+
+  var sheetId = extractSheetId(CONFIG.SHEET_VIEW_URL);
+  if (!sheetId) {
+    showFallback('尚未設定 SHEET_VIEW_URL，無法自動載入。請直接開啟 Google 試算表查看成績：');
+    return;
+  }
+  var gid = extractGid(CONFIG.SHEET_CSV_URL) || '0';
+
+  // 移除上一顆可能殘留的 script
+  var old = document.getElementById('gviz-script');
+  if (old) old.parentNode.removeChild(old);
+
+  window.google = window.google || {};
+  window.google.visualization = window.google.visualization || {};
+  window.google.visualization.Query = window.google.visualization.Query || {};
+  window.google.visualization.Query.setResponse = function (resp) {
+    gvizLoaded = true;
+    try {
+      allRows = gvizResponseToRows(resp);
+      renderDash();
+    } catch (e) {
+      showFallback('自動載入的資料格式無法解析。請直接開啟 Google 試算表查看成績：');
+    }
+  };
+
+  var script = document.createElement('script');
+  script.id = 'gviz-script';
+  script.src = 'https://docs.google.com/spreadsheets/d/' + sheetId + '/gviz/tq?tqx=out:json&gid=' + gid;
+  script.onerror = function () {
+    showFallback('自動載入失敗（可能是 Google 試算表尚未發布，或連結有誤）。請直接開啟 Google 試算表查看成績：');
+  };
+  document.body.appendChild(script);
+
+  setTimeout(function () {
+    if (!gvizLoaded) {
+      showFallback('自動載入逾時（可能是 Google 試算表分享權限不是「知道連結的使用者」）。請直接開啟 Google 試算表查看成績：');
+    }
+  }, 6000);
+}
+
+function gvizResponseToRows(resp) {
+  var table = resp.table;
+  var cols = table.cols.map(function (c) { return c.label || c.id; });
+  return table.rows.map(function (r) {
+    var obj = {};
+    cols.forEach(function (label, i) {
+      var cell = r.c[i];
+      var val = '';
+      if (cell) {
+        val = (cell.f !== undefined && cell.f !== null) ? cell.f : cell.v;
+      }
+      obj[label] = val == null ? '' : String(val);
+    });
+    return obj;
+  });
+}
+
+function showFallback(msg) {
+  document.getElementById('stat-cards').innerHTML = '';
+  document.getElementById('result-tbody').innerHTML = '';
+  var errBox = document.getElementById('dash-error');
+  errBox.style.display = 'block';
+  errBox.innerHTML = escapeHtml(msg) + '<br><br><a href="' + (CONFIG.SHEET_VIEW_URL || '#') +
+    '" target="_blank"><button class="secondary" type="button" style="margin-top:6px;">開啟 Google 試算表</button></a>';
+}
+
+// 簡易 CSV 解析（支援雙引號欄位內含逗號／換行）
+function parseCsvToRows(text) {
+  var rows = [];
+  var row = [];
+  var field = '';
+  var inQuotes = false;
+  for (var i = 0; i < text.length; i++) {
+    var c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else { inQuotes = false; }
+      } else {
+        field += c;
+      }
+    } else {
+      if (c === '"') { inQuotes = true; }
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else if (c === '\r') { /* skip */ }
+      else { field += c; }
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  if (!rows.length) return [];
+  var header = rows[0];
+  return rows.slice(1).filter(function (r) { return r.length > 1 || r[0]; }).map(function (r) {
+    var obj = {};
+    header.forEach(function (h, idx) { obj[h.trim()] = r[idx] || ''; });
+    return obj;
+  });
+}
+
+function getField(obj, candidates) {
+  for (var i = 0; i < candidates.length; i++) {
+    if (obj[candidates[i]] !== undefined) return obj[candidates[i]];
+  }
+  return '';
+}
+
+function renderDash() {
+  document.getElementById('dash-error').style.display = 'none';
+  var kw = document.getElementById('f-name').value.trim();
+  var mapped = allRows.map(function (r) {
+    return {
+      time: getField(r, ['時間戳記', 'Timestamp']),
+      name: getField(r, ['姓名']),
+      classSeat: getField(r, ['班級座號']),
+      categories: getField(r, ['測驗類別']),
+      totalQuestions: getField(r, ['題數']),
+      correctCount: getField(r, ['答對題數']),
+      wrongCount: getField(r, ['答錯題數']),
+      wrongDetails: getField(r, ['錯題明細'])
+    };
+  });
+  var filtered = mapped.filter(function (r) {
+    if (!kw) return true;
+    return (r.name || '').indexOf(kw) !== -1 || (r.classSeat || '').indexOf(kw) !== -1;
+  }).reverse();
+
+  var totalTests = filtered.length;
+  var avgScore = totalTests ? (filtered.reduce(function (s, r) {
+    var t = parseFloat(r.totalQuestions) || 1;
+    var c = parseFloat(r.correctCount) || 0;
+    return s + c / t;
+  }, 0) / totalTests * 100).toFixed(0) : 0;
+  var studentSet = {};
+  filtered.forEach(function (r) { studentSet[r.name + '|' + r.classSeat] = true; });
+
+  document.getElementById('stat-cards').innerHTML =
+    statCard(totalTests, '測驗份數') +
+    statCard(Object.keys(studentSet).length, '學生人數') +
+    statCard(avgScore + '%', '平均正確率');
+
+  var tbody = document.getElementById('result-tbody');
+  tbody.innerHTML = '';
+  filtered.forEach(function (r) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + escapeHtml(r.time) + '</td>' +
+      '<td>' + escapeHtml(r.name) + '</td>' +
+      '<td>' + escapeHtml(r.classSeat) + '</td>' +
+      '<td>' + escapeHtml(r.categories) + '</td>' +
+      '<td>' + escapeHtml(r.totalQuestions) + '</td>' +
+      '<td>' + escapeHtml(r.correctCount) + '</td>' +
+      '<td>' + escapeHtml(r.wrongCount) + '</td>' +
+      '<td><div class="wrong-list">' + escapeHtml(r.wrongDetails) + '</div></td>';
+    tbody.appendChild(tr);
+  });
+}
+
+function statCard(num, lbl) {
+  return '<div class="stat-card"><div class="num">' + num + '</div><div class="lbl">' + lbl + '</div></div>';
+}
+function escapeHtml(s) {
+  var div = document.createElement('div');
+  div.textContent = s == null ? '' : s;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>

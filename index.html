@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>國中成語測驗</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>國中成語測驗</h1>
+  <div class="sub">選擇類別，開始練習或測驗吧！</div>
+
+  <!-- ========== 開始畫面 ========== -->
+  <div id="screen-start" class="card">
+    <label>姓名</label>
+    <input type="text" id="in-name" placeholder="請輸入姓名">
+    <label>班級座號</label>
+    <input type="text" id="in-class" placeholder="例：802 班 15 號">
+
+    <label>選擇成語類別（可複選，不選則為全部）</label>
+    <div class="chip-group" id="category-chips"></div>
+
+    <label>題數</label>
+    <select id="in-count">
+      <option value="10">10 題</option>
+      <option value="12" selected>12 題</option>
+      <option value="15">15 題</option>
+    </select>
+
+    <label>模式</label>
+    <div class="mode-group">
+      <div class="mode-card selected" data-mode="practice" id="mode-practice">
+        <b>題型練習</b>每題作答後立即看解析，可重複作答
+      </div>
+      <div class="mode-card" data-mode="test" id="mode-test">
+        <b>正式測驗</b>全部作答完再對答案，成績會送出給老師
+      </div>
+    </div>
+    <div class="footer-note" style="margin-top:8px;text-align:left;">
+      正式測驗如果中途需要離開，30 分鐘內重新打開這個頁面，會詢問你是否要繼續上次未完成的測驗。
+    </div>
+
+    <button class="primary" id="btn-start">開始</button>
+  </div>
+
+  <!-- ========== 未完成測驗提示畫面 ========== -->
+  <div id="screen-resume" class="card" style="display:none">
+    <h2>發現尚未完成的正式測驗</h2>
+    <div class="sub" id="resume-info"></div>
+    <button class="primary" id="btn-resume">繼續上次的測驗</button>
+    <button class="secondary" id="btn-discard" style="width:100%;margin-top:10px;">放棄，重新開始</button>
+  </div>
+
+  <!-- ========== 測驗畫面 ========== -->
+  <div id="screen-quiz" class="card" style="display:none">
+    <div class="progress" id="quiz-progress"></div>
+    <div class="bar"><div id="quiz-bar" style="width:0%"></div></div>
+    <div class="stem-label" id="quiz-stem-label"></div>
+    <div class="stem" id="quiz-stem"></div>
+    <div id="quiz-options"></div>
+    <div class="select-note" id="select-note"></div>
+    <button class="ghost" id="btn-hint">💡 提示</button>
+    <div class="hint-box" id="hint-box"></div>
+    <div class="feedback" id="quiz-feedback"></div>
+    <div class="actions">
+      <button class="ghost" id="btn-save-exit" style="display:none">💾 暫存並離開</button>
+      <button class="secondary" id="btn-next" style="display:none">下一題</button>
+    </div>
+  </div>
+
+  <!-- ========== 已暫存畫面 ========== -->
+  <div id="screen-saved" class="card" style="display:none">
+    <h2>已暫存進度</h2>
+    <div class="sub" id="saved-info"></div>
+    <div class="banner">30 分鐘內用同一個網址、同一台裝置重新打開，就會問你要不要繼續測驗。現在可以放心關閉分頁。</div>
+    <button class="primary" id="btn-saved-ok">回到開始畫面</button>
+  </div>
+
+  <!-- ========== 結果畫面 ========== -->
+  <div id="screen-result" class="card" style="display:none">
+    <div class="banner" id="result-banner"></div>
+    <div class="score-big" id="result-score"></div>
+    <div class="score-sub" id="result-sub"></div>
+    <div id="result-list"></div>
+    <button class="primary" id="btn-restart">重新選擇，再測一次</button>
+  </div>
+
+  <div class="footer-note">
+    國中成語測驗 · 資料取自隨堂成語卷 ·
+    <a href="teacher.html">教師端查看成績</a>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="data.js"></script>
+<script src="quiz.js"></script>
+<script src="submit.js"></script>
+<script>
+// ============ UI 狀態 ============
+var state = {
+  name: '', classSeat: '', categories: [], count: 12, mode: 'practice',
+  questions: [], current: 0, answers: [], correctCount: 0,
+  currentChosen: -1, currentAttempts: 0, locked: false
+};
+var MAX_ATTEMPTS = 3; // 第一次選擇 + 最多重新選擇 2 次
+var LETTERS = ['A', 'B', 'C', 'D'];
+var PROGRESS_KEY = 'idiomTestProgress_v1';
+var PROGRESS_TTL_MS = 30 * 60 * 1000; // 30 分鐘
+
+// ============ 正式測驗暫存（30 分鐘內可續測） ============
+function saveTestProgress() {
+  if (state.mode !== 'test') return;
+  try {
+    var payload = {
+      savedAt: Date.now(),
+      name: state.name,
+      classSeat: state.classSeat,
+      categories: state.categories,
+      count: state.count,
+      questions: state.questions,
+      current: state.current,
+      answers: state.answers
+    };
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(payload));
+  } catch (e) { /* localStorage 不可用時直接忽略，不影響測驗進行 */ }
+}
+
+function loadTestProgress() {
+  try {
+    var raw = localStorage.getItem(PROGRESS_KEY);
+    if (!raw) return null;
+    var data = JSON.parse(raw);
+    if (!data || !data.savedAt || !data.questions || !data.questions.length) return null;
+    if (Date.now() - data.savedAt > PROGRESS_TTL_MS) {
+      clearTestProgress();
+      return null;
+    }
+    if (data.current >= data.questions.length) return null; // 已測完的不需要續測
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+function clearTestProgress() {
+  try { localStorage.removeItem(PROGRESS_KEY); } catch (e) {}
+}
+
+function checkResumeOnLoad() {
+  var data = loadTestProgress();
+  if (!data) return;
+  document.getElementById('screen-start').style.display = 'none';
+  document.getElementById('screen-resume').style.display = 'block';
+  var minsAgo = Math.max(1, Math.round((Date.now() - data.savedAt) / 60000));
+  document.getElementById('resume-info').textContent =
+    '「' + data.name + '」有一份正式測驗還沒完成（第 ' + (data.current + 1) + ' / ' + data.questions.length +
+    ' 題，' + minsAgo + ' 分鐘前的紀錄）。如果不是你本人的測驗，請選擇放棄重新開始。';
+
+  document.getElementById('btn-resume').onclick = function () {
+    state.mode = 'test';
+    state.name = data.name;
+    state.classSeat = data.classSeat;
+    state.categories = data.categories;
+    state.count = data.count;
+    state.questions = data.questions;
+    state.current = data.current;
+    state.answers = data.answers;
+    selectMode('test');
+    document.getElementById('screen-resume').style.display = 'none';
+    document.getElementById('screen-quiz').style.display = 'block';
+    showQuestion();
+  };
+  document.getElementById('btn-discard').onclick = function () {
+    clearTestProgress();
+    document.getElementById('screen-resume').style.display = 'none';
+    document.getElementById('screen-start').style.display = 'block';
+  };
+}
+
+function renderCategoryChips() {
+  var box = document.getElementById('category-chips');
+  CATEGORY_LIST.forEach(function (cat) {
+    var chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = cat;
+    chip.onclick = function () { chip.classList.toggle('selected'); };
+    box.appendChild(chip);
+  });
+}
+renderCategoryChips();
+
+document.getElementById('mode-practice').onclick = function () { selectMode('practice'); };
+document.getElementById('mode-test').onclick = function () { selectMode('test'); };
+function selectMode(mode) {
+  state.mode = mode;
+  document.getElementById('mode-practice').classList.toggle('selected', mode === 'practice');
+  document.getElementById('mode-test').classList.toggle('selected', mode === 'test');
+}
+
+document.getElementById('btn-start').onclick = function () {
+  state.name = document.getElementById('in-name').value.trim();
+  state.classSeat = document.getElementById('in-class').value.trim();
+  if (!state.name) { alert('請先輸入姓名'); return; }
+
+  if (state.mode === 'test') {
+    var existing = loadTestProgress();
+    if (existing) {
+      var ok = confirm('你有一份尚未完成的正式測驗（「' + existing.name + '」，第 ' +
+        (existing.current + 1) + ' / ' + existing.questions.length + ' 題）。\n' +
+        '開始新的測驗會放棄那份暫存進度，確定要繼續嗎？');
+      if (!ok) return;
+      clearTestProgress();
+    }
+  }
+
+  var chips = document.querySelectorAll('#category-chips .chip.selected');
+  state.categories = Array.prototype.map.call(chips, function (c) { return c.textContent; });
+  state.count = parseInt(document.getElementById('in-count').value, 10);
+
+  state.questions = assembleQuiz(state.categories, state.count);
+  state.current = 0;
+  state.answers = [];
+  state.correctCount = 0;
+
+  document.getElementById('screen-start').style.display = 'none';
+  document.getElementById('screen-result').style.display = 'none';
+  document.getElementById('screen-quiz').style.display = 'block';
+  showQuestion();
+};
+
+function showQuestion() {
+  var q = state.questions[state.current];
+  document.getElementById('quiz-progress').textContent =
+    '第 ' + (state.current + 1) + ' / ' + state.questions.length + ' 題' +
+    (state.mode === 'practice' ? '（題型練習）' : '（正式測驗）');
+  document.getElementById('quiz-bar').style.width =
+    Math.round((state.current) / state.questions.length * 100) + '%';
+  document.getElementById('quiz-stem-label').textContent = q.stemLabel || '請選出正確答案：';
+  document.getElementById('quiz-stem').textContent = q.stem;
+
+  var optBox = document.getElementById('quiz-options');
+  optBox.innerHTML = '';
+  q.options.forEach(function (opt, i) {
+    var btn = document.createElement('button');
+    btn.className = 'opt';
+    btn.innerHTML = '<span class="letter">' + LETTERS[i] + '</span>' + escapeHtml(opt);
+    btn.onclick = function () { selectAnswer(i); };
+    optBox.appendChild(btn);
+  });
+
+  state.currentChosen = -1;
+  state.currentAttempts = 0;
+  state.locked = false;
+
+  document.getElementById('select-note').style.display = 'none';
+  document.getElementById('select-note').textContent = '';
+  document.getElementById('hint-box').style.display = 'none';
+  document.getElementById('hint-box').textContent = '';
+  document.getElementById('quiz-feedback').style.display = 'none';
+  document.getElementById('btn-next').style.display = 'none';
+  document.getElementById('btn-hint').style.display = 'inline-block';
+  document.getElementById('btn-save-exit').style.display = state.mode === 'test' ? 'inline-block' : 'none';
+
+  saveTestProgress();
+}
+
+document.getElementById('btn-save-exit').onclick = function () {
+  saveTestProgress();
+  document.getElementById('screen-quiz').style.display = 'none';
+  document.getElementById('screen-saved').style.display = 'block';
+  document.getElementById('saved-info').textContent =
+    '「' + state.name + '」的測驗已暫存在第 ' + (state.current + 1) + ' / ' + state.questions.length + ' 題。';
+};
+
+document.getElementById('btn-saved-ok').onclick = function () {
+  document.getElementById('screen-saved').style.display = 'none';
+  document.getElementById('screen-start').style.display = 'block';
+};
+
+document.getElementById('btn-hint').onclick = function () {
+  var q = state.questions[state.current];
+  var box = document.getElementById('hint-box');
+  box.textContent = q.hint;
+  box.style.display = 'block';
+};
+
+function escapeHtml(s) {
+  var div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function selectAnswer(i) {
+  if (state.mode === 'test') {
+    selectAnswerTest(i);
+  } else {
+    selectAnswerPractice(i);
+  }
+}
+
+// 題型練習：作答後立即顯示對錯與解析（每題僅計分一次）
+function selectAnswerPractice(i) {
+  var q = state.questions[state.current];
+  var opts = document.querySelectorAll('#quiz-options .opt');
+  var isCorrect = i === q.correctIndex;
+
+  if (!state.answers[state.current]) {
+    if (isCorrect) state.correctCount++;
+  }
+  state.answers[state.current] = { chosenIndex: i, correct: isCorrect };
+
+  Array.prototype.forEach.call(opts, function (btn, idx) {
+    btn.classList.add('disabled');
+    if (idx === q.correctIndex) btn.classList.add('correct');
+    else if (idx === i) btn.classList.add('wrong');
+  });
+
+  document.getElementById('btn-hint').style.display = 'none';
+
+  var fb = document.getElementById('quiz-feedback');
+  fb.style.display = 'block';
+  fb.className = 'feedback ' + (isCorrect ? 'correct' : 'wrong');
+  fb.textContent = (isCorrect ? '✅ 答對了！' : '❌ 答錯了。') + '　解析：' + q.explanation;
+
+  document.getElementById('btn-next').style.display = 'inline-block';
+}
+
+// 正式測驗：不顯示對錯，最多可重新選擇 2 次（共 3 次機會），鎖定後才算最終答案
+function selectAnswerTest(i) {
+  if (state.locked) return;
+  if (i === state.currentChosen) return;
+
+  state.currentChosen = i;
+  state.currentAttempts++;
+
+  var opts = document.querySelectorAll('#quiz-options .opt');
+  Array.prototype.forEach.call(opts, function (btn, idx) {
+    btn.classList.remove('selected');
+    if (idx === i) btn.classList.add('selected');
+  });
+
+  var q = state.questions[state.current];
+  state.answers[state.current] = { chosenIndex: i, correct: i === q.correctIndex };
+
+  var remaining = MAX_ATTEMPTS - state.currentAttempts;
+  var note = document.getElementById('select-note');
+  note.style.display = 'block';
+  if (remaining > 0) {
+    note.textContent = '已選擇 ' + LETTERS[i] + '，還可以重新選擇 ' + remaining + ' 次（結果將在測驗結束後公布）。';
+  } else {
+    note.textContent = '已選擇 ' + LETTERS[i] + '，已達重新選擇次數上限，答案已鎖定。';
+    state.locked = true;
+    Array.prototype.forEach.call(opts, function (btn) { btn.classList.add('disabled'); });
+  }
+
+  document.getElementById('btn-hint').style.display = 'none';
+  document.getElementById('btn-next').style.display = 'inline-block';
+
+  saveTestProgress();
+}
+
+document.getElementById('btn-next').onclick = function () {
+  state.current++;
+  if (state.current >= state.questions.length) {
+    showResult();
+  } else {
+    showQuestion();
+  }
+};
+
+function showResult() {
+  document.getElementById('quiz-bar').style.width = '100%';
+  document.getElementById('screen-quiz').style.display = 'none';
+  document.getElementById('screen-result').style.display = 'block';
+
+  var total = state.questions.length;
+  var correct = state.answers.reduce(function (sum, a) { return sum + (a && a.correct ? 1 : 0); }, 0);
+  var wrong = total - correct;
+
+  document.getElementById('result-score').textContent = correct + ' / ' + total;
+  document.getElementById('result-sub').textContent =
+    '答對 ' + correct + ' 題，答錯 ' + wrong + ' 題';
+
+  var banner = document.getElementById('result-banner');
+  if (state.mode === 'test') {
+    banner.textContent = '這是正式測驗，成績已送出，老師可以透過教師端頁面查看。';
+  } else {
+    banner.textContent = '這是題型練習，成績不會送給老師，可以放心多練習幾次！';
+  }
+
+  var listBox = document.getElementById('result-list');
+  listBox.innerHTML = '';
+  var wrongDetails = [];
+  state.questions.forEach(function (q, i) {
+    var ans = state.answers[i] || { chosenIndex: -1, correct: false };
+    var div = document.createElement('div');
+    div.className = 'review-item';
+    var tag = ans.correct ? '<span class="tag right">答對</span>' : '<span class="tag wrong">答錯</span>';
+    div.innerHTML =
+      '<div class="review-q">第 ' + (i + 1) + ' 題　' + tag + '</div>' +
+      '<div class="review-line">' + escapeHtml(q.stemLabel || '') + escapeHtml(q.stem) + '</div>' +
+      '<div class="review-line">你的答案：<b>' + escapeHtml(ans.chosenIndex >= 0 ? q.options[ans.chosenIndex] : '未作答') + '</b></div>' +
+      '<div class="review-line">正確答案：<b>' + escapeHtml(q.options[q.correctIndex]) + '</b></div>' +
+      '<div class="review-line">解析：' + escapeHtml(q.explanation) + '</div>';
+    listBox.appendChild(div);
+
+    if (!ans.correct) {
+      wrongDetails.push({
+        question: (q.stemLabel || '') + q.stem,
+        yourAnswer: ans.chosenIndex >= 0 ? q.options[ans.chosenIndex] : '未作答',
+        correctAnswer: q.options[q.correctIndex],
+        explanation: q.explanation
+      });
+    }
+  });
+
+  if (state.mode === 'test') {
+    submitResultToForm({
+      name: state.name,
+      classSeat: state.classSeat,
+      categories: state.categories.length ? state.categories : ['全部類別'],
+      totalQuestions: total,
+      correctCount: correct,
+      wrongCount: wrong,
+      wrongDetails: wrongDetails
+    });
+    clearTestProgress();
+  }
+}
+
+document.getElementById('btn-restart').onclick = function () {
+  document.getElementById('screen-result').style.display = 'none';
+  document.getElementById('screen-start').style.display = 'block';
+};
+
+// 頁面載入時，檢查是否有 30 分鐘內未完成的正式測驗
+checkResumeOnLoad();
+</script>
+</body>
+</html>
