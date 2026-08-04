@@ -13,50 +13,53 @@
 
   <!-- ========== 開始畫面 ========== -->
   <div id="screen-start" class="card">
+    <div class="banner" id="classroom-banner" style="display:none;">🎯 老師安排的課堂小測驗，全班會拿到同一份題目，輸入姓名和班級座號就可以開始囉！</div>
     <label>姓名</label>
     <input type="text" id="in-name" placeholder="請輸入姓名">
     <label>班級座號</label>
     <input type="text" id="in-class" placeholder="例：802 班 15 號">
 
-    <label>選擇成語類別（可複選，不選則為全部）</label>
-    <div class="chip-group" id="category-chips"></div>
+    <div id="normal-options-block">
+      <label>選擇成語類別（可複選，不選則為全部）</label>
+      <div class="chip-group" id="category-chips"></div>
 
-    <label>題數（5～20 題）</label>
-    <input type="number" id="in-count" min="5" max="20" value="12">
+      <label>題數（5～20 題）</label>
+      <input type="number" id="in-count" min="5" max="20" value="12">
 
-    <label>模式</label>
-    <div class="mode-group">
-      <div class="mode-card selected" data-mode="practice" id="mode-practice">
-        <b>題型練習</b>每題作答後立即看解析，可重複作答
-      </div>
-      <div class="mode-card" data-mode="test" id="mode-test">
-        <b>正式測驗</b>全部作答完再對答案，成績會送出給老師
-      </div>
-    </div>
-
-    <div class="sub-panel" id="test-options" style="display:none">
-      <label style="margin-top:0;">正式測驗計時方式</label>
+      <label>模式</label>
       <div class="mode-group">
-        <div class="mode-card selected" id="timer-off">
-          <b>不計時</b>可以慢慢想
+        <div class="mode-card selected" data-mode="practice" id="mode-practice">
+          <b>題型練習</b>每題作答後立即看解析，可重複作答
         </div>
-        <div class="mode-card" id="timer-on">
-          <b>計時模式</b>每題有炸彈倒數
-        </div>
-      </div>
-      <div id="timer-seconds-group" style="display:none;">
-        <label>每題倒數秒數</label>
-        <div class="chip-group" id="timer-seconds-chips">
-          <div class="chip" data-sec="15">15 秒</div>
-          <div class="chip selected" data-sec="20">20 秒</div>
-          <div class="chip" data-sec="25">25 秒</div>
-          <div class="chip" data-sec="30">30 秒</div>
+        <div class="mode-card" data-mode="test" id="mode-test">
+          <b>正式測驗</b>全部作答完再對答案，成績會送出給老師
         </div>
       </div>
-    </div>
 
-    <div class="footer-note" style="margin-top:8px;text-align:left;">
-      正式測驗如果中途需要離開，30 分鐘內重新打開這個頁面，會詢問你是否要繼續上次未完成的測驗。
+      <div class="sub-panel" id="test-options" style="display:none">
+        <label style="margin-top:0;">正式測驗計時方式</label>
+        <div class="mode-group">
+          <div class="mode-card selected" id="timer-off">
+            <b>不計時</b>可以慢慢想
+          </div>
+          <div class="mode-card" id="timer-on">
+            <b>計時模式</b>每題有炸彈倒數
+          </div>
+        </div>
+        <div id="timer-seconds-group" style="display:none;">
+          <label>每題倒數秒數</label>
+          <div class="chip-group" id="timer-seconds-chips">
+            <div class="chip" data-sec="15">15 秒</div>
+            <div class="chip selected" data-sec="20">20 秒</div>
+            <div class="chip" data-sec="25">25 秒</div>
+            <div class="chip" data-sec="30">30 秒</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-note" style="margin-top:8px;text-align:left;">
+        正式測驗如果中途需要離開，30 分鐘內重新打開這個頁面，會詢問你是否要繼續上次未完成的測驗。
+      </div>
     </div>
 
     <button class="primary" id="btn-start">開始</button>
@@ -144,6 +147,34 @@ var timerRemaining = 0;
 
 function clearTimerInterval() {
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+// ============ 課堂模式：從網址參數快速開始（全班同一份題目） ============
+var CLASSROOM = (function () {
+  var qp = new URLSearchParams(location.search);
+  var seed = qp.get('seed');
+  if (!seed) return null;
+  var catsRaw = qp.get('cats');
+  return {
+    seed: seed,
+    categories: catsRaw ? decodeURIComponent(catsRaw).split(',').filter(Boolean) : [],
+    count: Math.max(5, Math.min(20, parseInt(qp.get('count'), 10) || 10))
+  };
+})();
+
+// ============ 慶祝彩帶效果（練習模式答對時） ============
+function launchConfetti() {
+  var colors = ['#ff6b5b', '#2ec4b6', '#ffc145', '#e85142', '#16a893'];
+  for (var i = 0; i < 22; i++) {
+    var el = document.createElement('div');
+    el.className = 'confetti-piece';
+    el.style.left = (Math.random() * 100) + 'vw';
+    el.style.background = colors[Math.floor(Math.random() * colors.length)];
+    el.style.animationDuration = (0.9 + Math.random() * 0.7) + 's';
+    el.style.transform = 'rotate(' + Math.floor(Math.random() * 360) + 'deg)';
+    document.body.appendChild(el);
+    (function (node) { setTimeout(function () { if (node.parentNode) node.parentNode.removeChild(node); }, 1800); })(el);
+  }
 }
 
 // ============ 正式測驗暫存（30 分鐘內可續測） ============
@@ -242,6 +273,11 @@ function renderCategoryChips() {
 }
 renderCategoryChips();
 
+if (CLASSROOM) {
+  document.getElementById('normal-options-block').style.display = 'none';
+  document.getElementById('classroom-banner').style.display = 'block';
+}
+
 document.getElementById('mode-practice').onclick = function () { selectMode('practice'); };
 document.getElementById('mode-test').onclick = function () { selectMode('test'); };
 function selectMode(mode) {
@@ -272,6 +308,25 @@ document.getElementById('btn-start').onclick = function () {
   state.name = document.getElementById('in-name').value.trim();
   state.classSeat = document.getElementById('in-class').value.trim();
   if (!state.name) { alert('請先輸入姓名'); return; }
+
+  if (CLASSROOM) {
+    // 課堂模式：老師出的連結，全班用同一個 seed 拿到同一份題目
+    state.mode = 'test';
+    state.timedMode = false;
+    state.categories = CLASSROOM.categories;
+    state.count = CLASSROOM.count;
+    state.questions = assembleQuiz(state.categories, state.count, CLASSROOM.seed);
+    state.current = 0;
+    state.answers = [];
+    state.correctCount = 0;
+    state.reviewEditMode = false;
+
+    document.getElementById('screen-start').style.display = 'none';
+    document.getElementById('screen-result').style.display = 'none';
+    document.getElementById('screen-quiz').style.display = 'block';
+    showQuestion();
+    return;
+  }
 
   if (state.mode === 'test') {
     var existing = loadTestProgress();
@@ -449,7 +504,10 @@ function selectAnswerPractice(i) {
   var isCorrect = i === q.correctIndex;
 
   if (!state.answers[state.current]) {
-    if (isCorrect) state.correctCount++;
+    if (isCorrect) {
+      state.correctCount++;
+      launchConfetti();
+    }
   }
   state.answers[state.current] = { chosenIndex: i, correct: isCorrect };
 

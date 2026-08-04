@@ -1,17 +1,29 @@
 
 // ============ 成語測驗引擎（練習模式／測驗模式共用） ============
 
-function shuffle(arr) {
+// 可重現的亂數產生器（課堂模式用同一個 seed 讓全班拿到同一份題目）
+function makeSeededRandom(seed) {
+  var s = seed >>> 0;
+  return function () {
+    s |= 0; s = (s + 0x6D2B79F5) | 0;
+    var t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffle(arr, rng) {
+  var rand = rng || Math.random;
   var a = arr.slice();
   for (var i = a.length - 1; i > 0; i--) {
-    var j = Math.floor(Math.random() * (i + 1));
+    var j = Math.floor(rand() * (i + 1));
     var t = a[i]; a[i] = a[j]; a[j] = t;
   }
   return a;
 }
 
-function sample(arr, n) {
-  return shuffle(arr).slice(0, n);
+function sample(arr, n, rng) {
+  return shuffle(arr, rng).slice(0, n);
 }
 
 // 依選取的類別過濾成語池；categories 為空陣列時代表「全部類別」
@@ -31,7 +43,7 @@ function filterExamByCategory(categories) {
 }
 
 // 產生「看釋義選成語」題目
-function makeDefToIdiomQuestion(pool, subject, usedIdiomTexts) {
+function makeDefToIdiomQuestion(pool, subject, usedIdiomTexts, rng) {
   var distractPool = IDIOM_DB.filter(function (it) {
     return it.i !== subject.i && usedIdiomTexts.indexOf(it.i) === -1;
   });
@@ -39,8 +51,8 @@ function makeDefToIdiomQuestion(pool, subject, usedIdiomTexts) {
     return it.c.some(function (c) { return subject.c.indexOf(c) !== -1; });
   });
   var candidates = sameCat.length >= 3 ? sameCat : distractPool;
-  var distractors = sample(candidates, 3);
-  var options = shuffle([subject].concat(distractors)).map(function (it) { return it.i; });
+  var distractors = sample(candidates, 3, rng);
+  var options = shuffle([subject].concat(distractors), rng).map(function (it) { return it.i; });
   var correctIndex = options.indexOf(subject.i);
   return {
     type: 'defToIdiom',
@@ -55,12 +67,12 @@ function makeDefToIdiomQuestion(pool, subject, usedIdiomTexts) {
 }
 
 // 產生「看成語選釋義」題目
-function makeIdiomToDefQuestion(pool, subject, usedIdiomTexts) {
+function makeIdiomToDefQuestion(pool, subject, usedIdiomTexts, rng) {
   var distractPool = IDIOM_DB.filter(function (it) {
     return it.i !== subject.i && usedIdiomTexts.indexOf(it.i) === -1;
   });
-  var distractors = sample(distractPool, 3);
-  var options = shuffle([subject].concat(distractors)).map(function (it) { return it.d; });
+  var distractors = sample(distractPool, 3, rng);
+  var options = shuffle([subject].concat(distractors), rng).map(function (it) { return it.d; });
   var correctIndex = options.indexOf(subject.d);
   return {
     type: 'idiomToDef',
@@ -98,9 +110,13 @@ function makeExamQuestion(q) {
 /**
  * 組一份測驗
  * categories: string[]  選取的類別（空陣列＝全部）
- * count: number 題數（10~15）
+ * count: number 題數（5~20）
+ * seed: number（選填）給定同一個 seed，會產生一模一樣的題目順序與內容，
+ *        課堂模式用來讓全班拿到同一份測驗
  */
-function assembleQuiz(categories, count) {
+function assembleQuiz(categories, count, seed) {
+  var rng = (seed !== undefined && seed !== null && seed !== '') ? makeSeededRandom(Number(seed)) : Math.random;
+
   var idiomPool = filterIdiomsByCategory(categories);
   var examPool = filterExamByCategory(categories);
 
@@ -110,10 +126,10 @@ function assembleQuiz(categories, count) {
   }
 
   var examTarget = Math.min(Math.round(count * 0.4), examPool.length);
-  var chosenExam = sample(examPool, examTarget);
+  var chosenExam = sample(examPool, examTarget, rng);
 
   var remaining = count - chosenExam.length;
-  var idiomShuffled = shuffle(idiomPool);
+  var idiomShuffled = shuffle(idiomPool, rng);
   var used = [];
   var generated = [];
   var idx = 0;
@@ -122,19 +138,19 @@ function assembleQuiz(categories, count) {
     if (used.indexOf(subject.i) !== -1) continue;
     used.push(subject.i);
     var q = (generated.length % 2 === 0)
-      ? makeDefToIdiomQuestion(idiomPool, subject, used)
-      : makeIdiomToDefQuestion(idiomPool, subject, used);
+      ? makeDefToIdiomQuestion(idiomPool, subject, used, rng)
+      : makeIdiomToDefQuestion(idiomPool, subject, used, rng);
     generated.push(q);
   }
   // pool 不夠時，允許重複補足（極端情況）
   while (generated.length < remaining && idiomPool.length > 0) {
-    var subject2 = idiomShuffled[Math.floor(Math.random() * idiomShuffled.length)];
-    var q2 = makeDefToIdiomQuestion(idiomPool, subject2, used);
+    var subject2 = idiomShuffled[Math.floor(rng() * idiomShuffled.length)];
+    var q2 = makeDefToIdiomQuestion(idiomPool, subject2, used, rng);
     generated.push(q2);
   }
 
   var examQuestions = chosenExam.map(makeExamQuestion);
-  var all = shuffle(generated.concat(examQuestions));
+  var all = shuffle(generated.concat(examQuestions), rng);
   return all.slice(0, count);
 }
 

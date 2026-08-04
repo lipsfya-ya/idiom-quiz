@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>課堂互動模式</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>🎯 課堂互動模式</h1>
+  <div class="sub">投影用：抽題目、抽學生，或一鍵出一份小測驗給全班</div>
+
+  <div id="screen-login" class="card">
+    <label>教師密碼</label>
+    <input type="text" id="in-pass" placeholder="請輸入密碼">
+    <button class="primary" id="btn-login">進入</button>
+    <div id="login-msg" class="sub" style="margin-top:10px;"></div>
+  </div>
+
+  <div id="screen-main" style="display:none">
+
+    <!-- ========== 學生名單 ========== -->
+    <div class="card">
+      <h2>👥 班級名單</h2>
+      <div class="sub">一行一個名字（或用逗號分隔），存起來下次打開還在。</div>
+      <textarea id="roster-text" rows="4" placeholder="例：王小明、陳小華、李小美..."></textarea>
+      <button class="secondary" id="btn-save-roster" style="margin-top:10px;">💾 儲存名單</button>
+      <span class="sub" id="roster-count" style="margin-left:10px;"></span>
+    </div>
+
+    <!-- ========== 抽題＋抽人 ========== -->
+    <div class="card">
+      <h2>🎲 抽題＋抽人</h2>
+      <label>抽題範圍（可複選，不選則為全部）</label>
+      <div class="chip-group" id="draw-category-chips"></div>
+
+      <div class="row" style="margin-top:14px;">
+        <button class="primary" id="btn-draw-question" style="margin-top:0;">🎲 抽一題</button>
+        <button class="primary" id="btn-draw-student" style="margin-top:0;">🙋 抽學生</button>
+      </div>
+
+      <div class="draw-stage" id="question-stage" style="display:none;">
+        <div class="stem-label" id="draw-stem-label" style="text-align:left;"></div>
+        <div class="stem" id="draw-stem" style="text-align:left;"></div>
+        <div id="draw-options" style="text-align:left;"></div>
+        <button class="secondary" id="btn-reveal-answer">👀 顯示答案</button>
+        <div class="review-line" id="draw-explanation" style="display:none;text-align:left;margin-top:10px;"></div>
+      </div>
+
+      <div class="draw-stage" id="student-stage" style="display:none;">
+        <div class="sub">被抽中的是……</div>
+        <div class="draw-name" id="draw-name">？</div>
+      </div>
+    </div>
+
+    <!-- ========== 一鍵出題給全班 ========== -->
+    <div class="card">
+      <h2>📋 一鍵出一份小測驗給全班</h2>
+      <div class="sub">全班點進同一個連結，會拿到完全一樣的題目，方便一起檢討。</div>
+      <label>類別（可複選，不選則為全部）</label>
+      <div class="chip-group" id="quiz-category-chips"></div>
+      <label>題數（5～20 題）</label>
+      <input type="number" id="quiz-count" min="5" max="20" value="10">
+      <button class="primary" id="btn-generate-link">📋 產生班級測驗連結</button>
+      <div class="link-box" id="link-box" style="display:none;">
+        <input type="text" id="link-output" readonly>
+        <button class="secondary" id="btn-copy-link">複製</button>
+      </div>
+      <div class="sub" id="copy-msg" style="margin-top:6px;"></div>
+    </div>
+
+  </div>
+
+  <div class="footer-note">
+    <a href="teacher.html">← 回教師端查看成績</a>　·　<a href="index.html">學生測驗頁</a>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="data.js"></script>
+<script src="quiz.js"></script>
+<script>
+document.getElementById('btn-login').onclick = login;
+document.getElementById('in-pass').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') login();
+});
+
+function login() {
+  var pass = document.getElementById('in-pass').value.trim();
+  var configured = (CONFIG.TEACHER_PASSCODE || '').trim();
+  if (!configured || configured.indexOf('請改成') === 0) {
+    document.getElementById('login-msg').textContent = '尚未在 config.js 設定教師密碼。';
+    return;
+  }
+  if (pass !== configured) {
+    document.getElementById('login-msg').textContent = '密碼錯誤，請再試一次。';
+    return;
+  }
+  document.getElementById('screen-login').style.display = 'none';
+  document.getElementById('screen-main').style.display = 'block';
+  init();
+}
+
+var ROSTER_KEY = 'classroomRoster_v1';
+
+function renderChips(containerId) {
+  var box = document.getElementById(containerId);
+  box.innerHTML = '';
+  CATEGORY_LIST.forEach(function (cat) {
+    var chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = cat;
+    chip.onclick = function () { chip.classList.toggle('selected'); };
+    box.appendChild(chip);
+  });
+}
+
+function getSelectedCats(containerId) {
+  var chips = document.querySelectorAll('#' + containerId + ' .chip.selected');
+  return Array.prototype.map.call(chips, function (c) { return c.textContent; });
+}
+
+function loadRoster() {
+  try {
+    var raw = localStorage.getItem(ROSTER_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { return []; }
+}
+
+function saveRosterFromTextarea() {
+  var text = document.getElementById('roster-text').value;
+  var names = text.split(/[\n,、，]/).map(function (s) { return s.trim(); }).filter(Boolean);
+  try { localStorage.setItem(ROSTER_KEY, JSON.stringify(names)); } catch (e) {}
+  document.getElementById('roster-count').textContent = '目前名單：' + names.length + ' 人（已儲存）';
+  return names;
+}
+
+function init() {
+  renderChips('draw-category-chips');
+  renderChips('quiz-category-chips');
+
+  var roster = loadRoster();
+  document.getElementById('roster-text').value = roster.join('、');
+  document.getElementById('roster-count').textContent = '目前名單：' + roster.length + ' 人';
+
+  document.getElementById('btn-save-roster').onclick = saveRosterFromTextarea;
+
+  document.getElementById('btn-draw-question').onclick = drawQuestion;
+  document.getElementById('btn-draw-student').onclick = drawStudent;
+  document.getElementById('btn-generate-link').onclick = generateLink;
+  document.getElementById('btn-copy-link').onclick = copyLink;
+}
+
+function escapeHtml(s) {
+  var div = document.createElement('div');
+  div.textContent = s == null ? '' : s;
+  return div.innerHTML;
+}
+
+var currentDrawQuestion = null;
+
+function drawQuestion() {
+  var cats = getSelectedCats('draw-category-chips');
+  var q = assembleQuiz(cats, 1)[0];
+  currentDrawQuestion = q;
+
+  document.getElementById('question-stage').style.display = 'block';
+  document.getElementById('draw-stem-label').textContent = q.stemLabel || '';
+  document.getElementById('draw-stem').textContent = q.stem;
+
+  var LETTERS = ['A', 'B', 'C', 'D'];
+  var optBox = document.getElementById('draw-options');
+  optBox.innerHTML = '';
+  q.options.forEach(function (opt, i) {
+    var div = document.createElement('div');
+    div.className = 'opt';
+    div.style.cursor = 'default';
+    div.innerHTML = '<span class="letter">' + LETTERS[i] + '</span>' + escapeHtml(opt);
+    div.setAttribute('data-idx', i);
+    optBox.appendChild(div);
+  });
+
+  document.getElementById('draw-explanation').style.display = 'none';
+  document.getElementById('btn-reveal-answer').style.display = 'inline-block';
+  document.getElementById('btn-reveal-answer').onclick = revealAnswer;
+}
+
+function revealAnswer() {
+  if (!currentDrawQuestion) return;
+  var opts = document.querySelectorAll('#draw-options .opt');
+  Array.prototype.forEach.call(opts, function (el) {
+    var idx = parseInt(el.getAttribute('data-idx'), 10);
+    if (idx === currentDrawQuestion.correctIndex) el.classList.add('correct');
+  });
+  var expl = document.getElementById('draw-explanation');
+  expl.style.display = 'block';
+  expl.innerHTML = '解析：' + escapeHtml(currentDrawQuestion.explanation);
+  document.getElementById('btn-reveal-answer').style.display = 'none';
+}
+
+var drawRollTimer = null;
+
+function drawStudent() {
+  var roster = loadRoster();
+  if (!roster.length) {
+    alert('請先在上面輸入班級名單並儲存。');
+    return;
+  }
+  document.getElementById('student-stage').style.display = 'block';
+  var nameEl = document.getElementById('draw-name');
+  nameEl.classList.add('rolling');
+  if (drawRollTimer) clearInterval(drawRollTimer);
+  var ticks = 0;
+  var maxTicks = 14;
+  drawRollTimer = setInterval(function () {
+    nameEl.textContent = roster[Math.floor(Math.random() * roster.length)];
+    ticks++;
+    if (ticks >= maxTicks) {
+      clearInterval(drawRollTimer);
+      drawRollTimer = null;
+      nameEl.classList.remove('rolling');
+      nameEl.textContent = roster[Math.floor(Math.random() * roster.length)];
+    }
+  }, 70);
+}
+
+function generateLink() {
+  var cats = getSelectedCats('quiz-category-chips');
+  var countVal = parseInt(document.getElementById('quiz-count').value, 10);
+  if (isNaN(countVal)) countVal = 10;
+  countVal = Math.max(5, Math.min(20, countVal));
+  document.getElementById('quiz-count').value = countVal;
+
+  var seed = Date.now() % 2147483647;
+  var base = location.href.replace(/classroom\.html.*$/, 'index.html');
+  var url = base + '?seed=' + seed +
+    (cats.length ? ('&cats=' + encodeURIComponent(cats.join(','))) : '') +
+    '&count=' + countVal;
+
+  document.getElementById('link-box').style.display = 'flex';
+  document.getElementById('link-output').value = url;
+  document.getElementById('copy-msg').textContent = '';
+}
+
+function copyLink() {
+  var input = document.getElementById('link-output');
+  input.select();
+  input.setSelectionRange(0, 99999);
+  var msg = document.getElementById('copy-msg');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(input.value).then(function () {
+      msg.textContent = '已複製連結，貼給學生就可以了！';
+    }).catch(function () {
+      msg.textContent = '複製失敗，請手動選取複製上面的連結。';
+    });
+  } else {
+    try {
+      document.execCommand('copy');
+      msg.textContent = '已複製連結，貼給學生就可以了！';
+    } catch (e) {
+      msg.textContent = '複製失敗，請手動選取複製上面的連結。';
+    }
+  }
+}
+</script>
+</body>
+</html>
