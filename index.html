@@ -21,12 +21,8 @@
     <label>選擇成語類別（可複選，不選則為全部）</label>
     <div class="chip-group" id="category-chips"></div>
 
-    <label>題數</label>
-    <select id="in-count">
-      <option value="10">10 題</option>
-      <option value="12" selected>12 題</option>
-      <option value="15">15 題</option>
-    </select>
+    <label>題數（5～20 題）</label>
+    <input type="number" id="in-count" min="5" max="20" value="12">
 
     <label>模式</label>
     <div class="mode-group">
@@ -37,6 +33,28 @@
         <b>正式測驗</b>全部作答完再對答案，成績會送出給老師
       </div>
     </div>
+
+    <div class="sub-panel" id="test-options" style="display:none">
+      <label style="margin-top:0;">正式測驗計時方式</label>
+      <div class="mode-group">
+        <div class="mode-card selected" id="timer-off">
+          <b>不計時</b>可以慢慢想
+        </div>
+        <div class="mode-card" id="timer-on">
+          <b>計時模式</b>每題有炸彈倒數
+        </div>
+      </div>
+      <div id="timer-seconds-group" style="display:none;">
+        <label>每題倒數秒數</label>
+        <div class="chip-group" id="timer-seconds-chips">
+          <div class="chip" data-sec="15">15 秒</div>
+          <div class="chip selected" data-sec="20">20 秒</div>
+          <div class="chip" data-sec="25">25 秒</div>
+          <div class="chip" data-sec="30">30 秒</div>
+        </div>
+      </div>
+    </div>
+
     <div class="footer-note" style="margin-top:8px;text-align:left;">
       正式測驗如果中途需要離開，30 分鐘內重新打開這個頁面，會詢問你是否要繼續上次未完成的測驗。
     </div>
@@ -56,6 +74,7 @@
   <div id="screen-quiz" class="card" style="display:none">
     <div class="progress" id="quiz-progress"></div>
     <div class="bar"><div id="quiz-bar" style="width:0%"></div></div>
+    <div class="timer-box" id="timer-box">💣 <span id="timer-seconds-left">0</span> 秒</div>
     <div class="stem-label" id="quiz-stem-label"></div>
     <div class="stem" id="quiz-stem"></div>
     <div id="quiz-options"></div>
@@ -64,6 +83,7 @@
     <div class="hint-box" id="hint-box"></div>
     <div class="feedback" id="quiz-feedback"></div>
     <div class="actions">
+      <button class="ghost" id="btn-home" style="display:none">🏠 回首頁</button>
       <button class="ghost" id="btn-save-exit" style="display:none">💾 暫存並離開</button>
       <button class="secondary" id="btn-next" style="display:none">下一題</button>
     </div>
@@ -112,12 +132,19 @@
 var state = {
   name: '', classSeat: '', categories: [], count: 12, mode: 'practice',
   questions: [], current: 0, answers: [], correctCount: 0,
-  currentChosen: -1, currentAttempts: 0, locked: false
+  currentChosen: -1, currentAttempts: 0, locked: false,
+  timedMode: false, timerSeconds: 20, reviewEditMode: false
 };
 var MAX_ATTEMPTS = 3; // 第一次選擇 + 最多重新選擇 2 次
 var LETTERS = ['A', 'B', 'C', 'D'];
 var PROGRESS_KEY = 'idiomTestProgress_v1';
 var PROGRESS_TTL_MS = 30 * 60 * 1000; // 30 分鐘
+var timerInterval = null;
+var timerRemaining = 0;
+
+function clearTimerInterval() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
 
 // ============ 正式測驗暫存（30 分鐘內可續測） ============
 function saveTestProgress() {
@@ -131,7 +158,9 @@ function saveTestProgress() {
       count: state.count,
       questions: state.questions,
       current: state.current,
-      answers: state.answers
+      answers: state.answers,
+      timedMode: state.timedMode,
+      timerSeconds: state.timerSeconds
     };
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(payload));
   } catch (e) { /* localStorage 不可用時直接忽略，不影響測驗進行 */ }
@@ -179,10 +208,16 @@ function checkResumeOnLoad() {
     state.questions = data.questions;
     state.current = data.current;
     state.answers = data.answers;
+    state.timedMode = !!data.timedMode;
+    state.timerSeconds = data.timerSeconds || 20;
     selectMode('test');
     document.getElementById('screen-resume').style.display = 'none';
     if (atReview) {
-      showReviewScreen();
+      if (state.timedMode) {
+        showResult();
+      } else {
+        showReviewScreen();
+      }
     } else {
       document.getElementById('screen-quiz').style.display = 'block';
       showQuestion();
@@ -213,7 +248,25 @@ function selectMode(mode) {
   state.mode = mode;
   document.getElementById('mode-practice').classList.toggle('selected', mode === 'practice');
   document.getElementById('mode-test').classList.toggle('selected', mode === 'test');
+  document.getElementById('test-options').style.display = mode === 'test' ? 'block' : 'none';
 }
+
+document.getElementById('timer-off').onclick = function () { selectTimedMode(false); };
+document.getElementById('timer-on').onclick = function () { selectTimedMode(true); };
+function selectTimedMode(on) {
+  state.timedMode = on;
+  document.getElementById('timer-off').classList.toggle('selected', !on);
+  document.getElementById('timer-on').classList.toggle('selected', on);
+  document.getElementById('timer-seconds-group').style.display = on ? 'block' : 'none';
+}
+var timerSecChips = document.querySelectorAll('#timer-seconds-chips .chip');
+Array.prototype.forEach.call(timerSecChips, function (chip) {
+  chip.onclick = function () {
+    Array.prototype.forEach.call(timerSecChips, function (c) { c.classList.remove('selected'); });
+    chip.classList.add('selected');
+    state.timerSeconds = parseInt(chip.getAttribute('data-sec'), 10);
+  };
+});
 
 document.getElementById('btn-start').onclick = function () {
   state.name = document.getElementById('in-name').value.trim();
@@ -233,12 +286,22 @@ document.getElementById('btn-start').onclick = function () {
 
   var chips = document.querySelectorAll('#category-chips .chip.selected');
   state.categories = Array.prototype.map.call(chips, function (c) { return c.textContent; });
-  state.count = parseInt(document.getElementById('in-count').value, 10);
+
+  var countVal = parseInt(document.getElementById('in-count').value, 10);
+  if (isNaN(countVal)) countVal = 12;
+  countVal = Math.max(5, Math.min(20, countVal));
+  document.getElementById('in-count').value = countVal;
+  state.count = countVal;
+
+  if (state.mode !== 'test') {
+    state.timedMode = false;
+  }
 
   state.questions = assembleQuiz(state.categories, state.count);
   state.current = 0;
   state.answers = [];
   state.correctCount = 0;
+  state.reviewEditMode = false;
 
   document.getElementById('screen-start').style.display = 'none';
   document.getElementById('screen-result').style.display = 'none';
@@ -276,13 +339,65 @@ function showQuestion() {
   document.getElementById('hint-box').textContent = '';
   document.getElementById('quiz-feedback').style.display = 'none';
   document.getElementById('btn-next').style.display = 'none';
+  document.getElementById('btn-next').textContent = '下一題';
   document.getElementById('btn-hint').style.display = 'inline-block';
   document.getElementById('btn-save-exit').style.display = state.mode === 'test' ? 'inline-block' : 'none';
+  document.getElementById('btn-home').style.display = state.mode === 'practice' ? 'inline-block' : 'none';
+
+  if (state.reviewEditMode) {
+    document.getElementById('btn-next').textContent = '回到檢查畫面';
+    document.getElementById('btn-next').style.display = 'inline-block';
+  }
+
+  clearTimerInterval();
+  if (state.mode === 'test' && state.timedMode && !state.reviewEditMode) {
+    startQuestionTimer();
+  } else {
+    document.getElementById('timer-box').style.display = 'none';
+  }
 
   saveTestProgress();
 }
 
+function startQuestionTimer() {
+  timerRemaining = state.timerSeconds;
+  var box = document.getElementById('timer-box');
+  var span = document.getElementById('timer-seconds-left');
+  box.style.display = 'block';
+  box.classList.remove('timer-warn');
+  span.textContent = timerRemaining;
+  timerInterval = setInterval(function () {
+    timerRemaining--;
+    span.textContent = timerRemaining;
+    if (timerRemaining <= 5) box.classList.add('timer-warn');
+    if (timerRemaining <= 0) {
+      clearTimerInterval();
+      onTimeUp();
+    }
+  }, 1000);
+}
+
+function onTimeUp() {
+  if (!state.locked) {
+    state.locked = true;
+    var opts = document.querySelectorAll('#quiz-options .opt');
+    Array.prototype.forEach.call(opts, function (btn) { btn.classList.add('disabled'); });
+    if (!state.answers[state.current]) {
+      state.answers[state.current] = { chosenIndex: -1, correct: false };
+    }
+  }
+  document.getElementById('timer-box').style.display = 'none';
+  var note = document.getElementById('select-note');
+  note.style.display = 'block';
+  note.textContent = '⏰ 時間到！自動進入下一題。';
+  saveTestProgress();
+  setTimeout(function () {
+    document.getElementById('btn-next').click();
+  }, 800);
+}
+
 function saveAndExit() {
+  clearTimerInterval();
   saveTestProgress();
   document.getElementById('screen-quiz').style.display = 'none';
   document.getElementById('screen-review').style.display = 'none';
@@ -297,6 +412,12 @@ document.getElementById('btn-save-exit-review').onclick = saveAndExit;
 
 document.getElementById('btn-saved-ok').onclick = function () {
   document.getElementById('screen-saved').style.display = 'none';
+  document.getElementById('screen-start').style.display = 'block';
+};
+
+document.getElementById('btn-home').onclick = function () {
+  clearTimerInterval();
+  document.getElementById('screen-quiz').style.display = 'none';
   document.getElementById('screen-start').style.display = 'block';
 };
 
@@ -374,6 +495,8 @@ function selectAnswerTest(i) {
     note.textContent = '已選擇 ' + LETTERS[i] + '，已達重新選擇次數上限，答案已鎖定。';
     state.locked = true;
     Array.prototype.forEach.call(opts, function (btn) { btn.classList.add('disabled'); });
+    clearTimerInterval();
+    document.getElementById('timer-box').style.display = 'none';
   }
 
   document.getElementById('btn-hint').style.display = 'none';
@@ -383,9 +506,16 @@ function selectAnswerTest(i) {
 }
 
 document.getElementById('btn-next').onclick = function () {
+  if (state.reviewEditMode) {
+    state.reviewEditMode = false;
+    clearTimerInterval();
+    showReviewScreen();
+    return;
+  }
+  clearTimerInterval();
   state.current++;
   if (state.current >= state.questions.length) {
-    if (state.mode === 'test') {
+    if (state.mode === 'test' && !state.timedMode) {
       showReviewScreen();
     } else {
       showResult();
@@ -394,6 +524,15 @@ document.getElementById('btn-next').onclick = function () {
     showQuestion();
   }
 };
+
+// 從送出前檢查畫面跳回去修改某一題
+function editQuestionFromReview(i) {
+  state.current = i;
+  state.reviewEditMode = true;
+  document.getElementById('screen-review').style.display = 'none';
+  document.getElementById('screen-quiz').style.display = 'block';
+  showQuestion();
+}
 
 // 正式測驗：全部作答完後，送出前讓學生再檢查一次（不顯示對錯）
 function showReviewScreen() {
@@ -414,11 +553,20 @@ function showReviewScreen() {
       '<div class="review-q">第 ' + (i + 1) + ' 題　' + tag + '</div>' +
       '<div class="review-line">' + escapeHtml(q.stemLabel || '') + escapeHtml(q.stem) + '</div>' +
       '<div class="review-line">你的答案：<b>' + escapeHtml(answered ? q.options[ans.chosenIndex] : '未作答') + '</b></div>';
+    var editBtn = document.createElement('button');
+    editBtn.className = 'secondary';
+    editBtn.style.cssText = 'margin-top:8px;padding:6px 12px;font-size:13px;';
+    editBtn.textContent = '修改這一題';
+    editBtn.onclick = (function (idx) {
+      return function () { editQuestionFromReview(idx); };
+    })(i);
+    div.appendChild(editBtn);
     listBox.appendChild(div);
   });
 }
 
 document.getElementById('btn-confirm-submit').onclick = function () {
+  clearTimerInterval();
   document.getElementById('screen-review').style.display = 'none';
   showResult();
 };
