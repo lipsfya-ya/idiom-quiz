@@ -69,6 +69,17 @@
     </div>
   </div>
 
+  <!-- ========== 送出前檢查畫面 ========== -->
+  <div id="screen-review" class="card" style="display:none">
+    <h2>送出前，再檢查一次你的答案</h2>
+    <div class="sub">這時候還看不到對錯，確認沒問題後再按「確認送出」。送出後就無法再修改。</div>
+    <div id="review-list"></div>
+    <div class="actions" style="justify-content:space-between;">
+      <button class="ghost" id="btn-save-exit-review">💾 暫存並離開</button>
+      <button class="primary" id="btn-confirm-submit" style="width:auto;margin-top:0;">確認送出</button>
+    </div>
+  </div>
+
   <!-- ========== 已暫存畫面 ========== -->
   <div id="screen-saved" class="card" style="display:none">
     <h2>已暫存進度</h2>
@@ -136,8 +147,8 @@ function loadTestProgress() {
       clearTestProgress();
       return null;
     }
-    if (data.current >= data.questions.length) return null; // 已測完的不需要續測
-    return data;
+    if (data.current > data.questions.length) return null;
+    return data; // current === questions.length 代表已答完、等待送出前檢查
   } catch (e) {
     return null;
   }
@@ -153,9 +164,11 @@ function checkResumeOnLoad() {
   document.getElementById('screen-start').style.display = 'none';
   document.getElementById('screen-resume').style.display = 'block';
   var minsAgo = Math.max(1, Math.round((Date.now() - data.savedAt) / 60000));
+  var atReview = data.current >= data.questions.length;
   document.getElementById('resume-info').textContent =
-    '「' + data.name + '」有一份正式測驗還沒完成（第 ' + (data.current + 1) + ' / ' + data.questions.length +
-    ' 題，' + minsAgo + ' 分鐘前的紀錄）。如果不是你本人的測驗，請選擇放棄重新開始。';
+    '「' + data.name + '」有一份正式測驗還沒完成（' +
+    (atReview ? '已作答完畢，尚未送出' : ('第 ' + (data.current + 1) + ' / ' + data.questions.length + ' 題')) +
+    '，' + minsAgo + ' 分鐘前的紀錄）。如果不是你本人的測驗，請選擇放棄重新開始。';
 
   document.getElementById('btn-resume').onclick = function () {
     state.mode = 'test';
@@ -168,8 +181,12 @@ function checkResumeOnLoad() {
     state.answers = data.answers;
     selectMode('test');
     document.getElementById('screen-resume').style.display = 'none';
-    document.getElementById('screen-quiz').style.display = 'block';
-    showQuestion();
+    if (atReview) {
+      showReviewScreen();
+    } else {
+      document.getElementById('screen-quiz').style.display = 'block';
+      showQuestion();
+    }
   };
   document.getElementById('btn-discard').onclick = function () {
     clearTestProgress();
@@ -265,13 +282,18 @@ function showQuestion() {
   saveTestProgress();
 }
 
-document.getElementById('btn-save-exit').onclick = function () {
+function saveAndExit() {
   saveTestProgress();
   document.getElementById('screen-quiz').style.display = 'none';
+  document.getElementById('screen-review').style.display = 'none';
   document.getElementById('screen-saved').style.display = 'block';
+  var atReview = state.current >= state.questions.length;
   document.getElementById('saved-info').textContent =
-    '「' + state.name + '」的測驗已暫存在第 ' + (state.current + 1) + ' / ' + state.questions.length + ' 題。';
-};
+    '「' + state.name + '」的測驗已暫存（' +
+    (atReview ? '已作答完畢，尚未送出' : ('第 ' + (state.current + 1) + ' / ' + state.questions.length + ' 題')) + '）。';
+}
+document.getElementById('btn-save-exit').onclick = saveAndExit;
+document.getElementById('btn-save-exit-review').onclick = saveAndExit;
 
 document.getElementById('btn-saved-ok').onclick = function () {
   document.getElementById('screen-saved').style.display = 'none';
@@ -363,10 +385,42 @@ function selectAnswerTest(i) {
 document.getElementById('btn-next').onclick = function () {
   state.current++;
   if (state.current >= state.questions.length) {
-    showResult();
+    if (state.mode === 'test') {
+      showReviewScreen();
+    } else {
+      showResult();
+    }
   } else {
     showQuestion();
   }
+};
+
+// 正式測驗：全部作答完後，送出前讓學生再檢查一次（不顯示對錯）
+function showReviewScreen() {
+  document.getElementById('screen-quiz').style.display = 'none';
+  document.getElementById('screen-review').style.display = 'block';
+
+  saveTestProgress();
+
+  var listBox = document.getElementById('review-list');
+  listBox.innerHTML = '';
+  state.questions.forEach(function (q, i) {
+    var ans = state.answers[i];
+    var div = document.createElement('div');
+    div.className = 'review-item';
+    var answered = ans && ans.chosenIndex >= 0;
+    var tag = answered ? '' : '<span class="tag wrong">未作答</span>';
+    div.innerHTML =
+      '<div class="review-q">第 ' + (i + 1) + ' 題　' + tag + '</div>' +
+      '<div class="review-line">' + escapeHtml(q.stemLabel || '') + escapeHtml(q.stem) + '</div>' +
+      '<div class="review-line">你的答案：<b>' + escapeHtml(answered ? q.options[ans.chosenIndex] : '未作答') + '</b></div>';
+    listBox.appendChild(div);
+  });
+}
+
+document.getElementById('btn-confirm-submit').onclick = function () {
+  document.getElementById('screen-review').style.display = 'none';
+  showResult();
 };
 
 function showResult() {
